@@ -1,0 +1,37 @@
+{
+  "name": "@vortex-enclave/mcp-server",
+  "version": "0.1.0",
+  "description": "MCP stdio bridge for Vortex Enclave — translates stdio JSON-RPC to the hosted /mcp HTTPS endpoint, so Claude Desktop / Cursor / Continue / any stdio MCP host can connect.",
+  "type": "module",
+  "bin": {
+    "vortex-enclave-mcp-server": "./index.js"
+  },
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "vortex-enclave",
+    "vector-search",
+    "rag",
+    "agent-memory",
+    "claude",
+    "cursor"
+  ],
+  "homepage": "https://fusionlab.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feepfoop/vortex-enclave-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/feepfoop/vortex-enclave-mcp-server/issues"
+  },
+  "license": "MIT"
+}
