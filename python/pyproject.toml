@@ -38,6 +38,10 @@ dev = [
     "pytest-asyncio>=0.21",
     "ruff>=0.1",
 ]
+mxbai = [
+    "sentence-transformers>=3.0",
+    "torch>=2.0",
+]
 
 [build-system]
 requires = ["hatchling"]

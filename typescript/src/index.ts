@@ -11,6 +11,26 @@ const DEFAULT_ENDPOINT =
 const USER_AGENT = "vortex-enclave-ts/0.1.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Embedding-space constants — single source of truth.
+//
+// Every vector in the upstream index must come from this exact model.
+// Mixing models silently returns garbage (cosine across mismatched spaces is
+// not meaningful). If you self-host with a different model, override these
+// — but be aware they describe the hosted production deployment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const EMBEDDING_MODEL = "mixedbread-ai/mxbai-embed-large-v1";
+export const EMBEDDING_DIMENSION = 1024;
+export const EMBEDDING_DISTANCE = "cosine" as const;
+export const EMBEDDING_NORMALIZED = true;
+
+/**
+ * Anything callable as `(text) => number[] | Promise<number[]>` works.
+ * The SDK runs it before sending so the server only sees vectors.
+ */
+export type LocalEmbedder = (text: string) => number[] | Promise<number[]>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -160,6 +180,28 @@ export class VortexInternalError extends VortexError {
   }
 }
 
+/**
+ * The vector you're trying to send doesn't match the upstream index's
+ * embedding contract — wrong dimension, or local embedder produced a value
+ * of the wrong shape.
+ */
+export class VortexEmbeddingError extends VortexError {
+  constructor(message: string, data?: unknown) {
+    super(message, undefined, data);
+    this.name = "VortexEmbeddingError";
+  }
+}
+
+/** Refuse to send vectors that obviously can't match the upstream index. */
+function validateVector(vec: number[]): void {
+  if (!Array.isArray(vec) || vec.length !== EMBEDDING_DIMENSION) {
+    throw new VortexEmbeddingError(
+      `Vector has ${vec?.length ?? 0} dimensions; upstream index expects ${EMBEDDING_DIMENSION}. ` +
+        `Make sure your embedder produces ${EMBEDDING_DIMENSION}-dim mxbai-compatible vectors.`,
+    );
+  }
+}
+
 function raiseForJsonRpcError(err: {
   code?: number;
   message?: string;
@@ -187,6 +229,17 @@ export interface VortexClientOptions {
   fetchImpl?: typeof fetch;
   /** Per-request timeout in milliseconds. Default 30s. */
   timeoutMs?: number;
+  /**
+   * Optional local embedder. If provided, `query(text)` runs the embedder
+   * client-side and sends a vector — query text never leaves your machine.
+   * Without it, `query(text)` sends the text to the server and relies on the
+   * server-side worker tunnel for embedding.
+   *
+   * The embedder MUST produce 1024-dim L2-normalized vectors in
+   * mxbai-embed-large-v1's embedding space. The SDK validates dimension
+   * before sending and throws VortexEmbeddingError on mismatch.
+   */
+  localEmbedder?: LocalEmbedder;
 }
 
 export interface QueryOptions {
@@ -216,6 +269,7 @@ export class VortexClient {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly localEmbedder: LocalEmbedder | undefined;
 
   constructor(options: VortexClientOptions = {}) {
     const apiKey =
@@ -237,6 +291,7 @@ export class VortexClient {
       DEFAULT_ENDPOINT;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.localEmbedder = options.localEmbedder;
   }
 
   // ── identity ───────────────────────────────────────────────────────────
@@ -274,6 +329,16 @@ export class VortexClient {
 
   // ── recall ─────────────────────────────────────────────────────────────
 
+  /**
+   * Semantic search. Three modes:
+   *
+   * 1. **Server-side embed** (default): pass text, server embeds via the
+   *    worker tunnel. Requires `VORTEX_EMBED_URL` set on the proxy Lambda.
+   * 2. **Client-side embed**: pass text, the SDK runs your configured
+   *    `localEmbedder` and sends a vector. Query text never leaves your
+   *    machine.
+   * 3. **Pre-computed vector**: pass a 1024-dim float array.
+   */
   async query(
     textOrVector: string | number[],
     options: QueryOptions = {},
@@ -282,8 +347,18 @@ export class VortexClient {
       top_k: options.topK ?? 10,
       expand: options.expand ?? true,
     };
-    if (typeof textOrVector === "string") args.text = textOrVector;
-    else args.vector = textOrVector;
+    if (typeof textOrVector === "string") {
+      if (this.localEmbedder) {
+        const vec = await this.localEmbedder(textOrVector);
+        validateVector(vec);
+        args.vector = vec;
+      } else {
+        args.text = textOrVector;
+      }
+    } else {
+      validateVector(textOrVector);
+      args.vector = textOrVector;
+    }
     return this.toolCall<QueryResponse>("vortex_query", args);
   }
 

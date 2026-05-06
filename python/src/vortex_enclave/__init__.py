@@ -23,12 +23,19 @@ Or async::
 """
 
 from .client import VortexClient, AsyncVortexClient
+from .constants import (
+    EMBEDDING_MODEL,
+    EMBEDDING_DIMENSION,
+    EMBEDDING_DISTANCE,
+    EMBEDDING_NORMALIZED,
+)
 from .errors import (
     VortexError,
     VortexAuthError,
     VortexScopeError,
     VortexInvalidParamsError,
     VortexInternalError,
+    VortexEmbeddingError,
 )
 from .types import (
     QueryResult,
@@ -50,11 +57,16 @@ __version__ = "0.1.0"
 __all__ = [
     "VortexClient",
     "AsyncVortexClient",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSION",
+    "EMBEDDING_DISTANCE",
+    "EMBEDDING_NORMALIZED",
     "VortexError",
     "VortexAuthError",
     "VortexScopeError",
     "VortexInvalidParamsError",
     "VortexInternalError",
+    "VortexEmbeddingError",
     "QueryResult",
     "QueryResponse",
     "IngestResult",

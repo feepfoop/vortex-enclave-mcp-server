@@ -37,7 +37,7 @@ const doc = await client.ingestText("Notes on chunking strategies", {
 });
 console.log("queued", doc.doc_id);
 
-// Recall (text input — server embeds via the worker tunnel)
+// Recall (server embeds the text — see "Embedding modes" below)
 const results = await client.query("how do I split documents?", { topK: 5 });
 for (const r of results.results) {
   const text = (r.metadata.text as string | undefined)?.slice(0, 80);
@@ -45,11 +45,85 @@ for (const r of results.results) {
 }
 ```
 
-Or with a pre-computed 1024-dim vector:
+## Embedding modes — three ways to query
+
+The upstream index is built with **`mixedbread-ai/mxbai-embed-large-v1`**
+(1024-dim, cosine, L2-normalized). All vectors must come from this exact
+embedding space. The SDK exports the constants:
 
 ```ts
-const results = await client.query([0.0123, -0.0456, /* ... 1024 floats ... */]);
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSION } from "@vortex-enclave/sdk";
+// → "mixedbread-ai/mxbai-embed-large-v1", 1024
 ```
+
+### Mode 1 — server-side embed (default, easiest)
+
+Pass text. The server embeds via the worker tunnel.
+
+```ts
+const results = await client.query("how does chunking work?", { topK: 5 });
+```
+
+### Mode 2 — client-side embed (recommended for privacy or scale)
+
+Provide a `localEmbedder` to the constructor. The SDK runs it client-side
+and sends only the resulting 1024-dim vector. Query text never leaves your
+machine.
+
+In Node, [`@xenova/transformers`](https://github.com/xenova/transformers.js)
+runs mxbai locally via ONNX:
+
+```ts
+import { VortexClient } from "@vortex-enclave/sdk";
+import { pipeline } from "@xenova/transformers";
+
+// One-time: load the model (downloads ~700MB to local cache)
+const embedder = await pipeline("feature-extraction", "mixedbread-ai/mxbai-embed-large-v1");
+
+const client = new VortexClient({
+  apiKey: process.env.VORTEX_API_KEY,
+  localEmbedder: async (text) => {
+    const out = await embedder(text, { pooling: "mean", normalize: true });
+    return Array.from(out.data);
+  },
+});
+
+const results = await client.query("how does chunking work?");
+```
+
+In a browser, the same approach works — `@xenova/transformers` is
+browser-compatible. Set `localEmbedder` and the query text never crosses
+the network.
+
+Or bring your own callable that returns a 1024-dim L2-normalized
+mxbai-compatible vector:
+
+```ts
+const client = new VortexClient({
+  apiKey: "...",
+  localEmbedder: async (text: string) => {
+    return await mySdkOfChoice.embed(text);  // must be 1024-d, mxbai-space
+  },
+});
+```
+
+The SDK validates the dimension before sending and throws
+`VortexEmbeddingError` if it isn't 1024.
+
+### Mode 3 — pre-computed vectors (advanced)
+
+```ts
+const v = await myPipeline.embed(queryText);  // must be 1024-d, mxbai-space
+const results = await client.query(v, { topK: 5 });
+```
+
+### Picking a mode
+
+| Mode | Privacy | Setup | Latency | When |
+|---|---|---|---|---|
+| Server-side | text crosses wire | none | network round-trip | the default — fine for most things |
+| Client-side (`localEmbedder`) | text stays local | `npm i @xenova/transformers` | first run downloads model | privacy; offline-friendly; browser apps |
+| Pre-computed | text stays local | depends on you | fastest | bulk batches; existing pipelines |
 
 ## Methods
 

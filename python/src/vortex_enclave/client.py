@@ -7,11 +7,16 @@ Both classes hide the JSON-RPC envelope and tool-name details. You call
 from __future__ import annotations
 import os
 import uuid
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, List, Sequence
+
+LocalEmbedder = Callable[[str], Sequence[float]]
+"""Anything callable as ``embedder(text) -> Sequence[float]`` works.
+The SDK runs it before sending so the server only sees vectors."""
 
 import httpx
 
-from .errors import raise_for_jsonrpc_error
+from .constants import EMBEDDING_DIMENSION
+from .errors import VortexEmbeddingError, raise_for_jsonrpc_error
 from .types import (
     Identity,
     QueryResult,
@@ -71,6 +76,16 @@ def _unwrap_tool_call(resp: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _validate_vector(vec: List[float]) -> None:
+    """Refuse to send vectors that obviously can't match the upstream index."""
+    if len(vec) != EMBEDDING_DIMENSION:
+        raise VortexEmbeddingError(
+            f"Vector has {len(vec)} dimensions; upstream index expects "
+            f"{EMBEDDING_DIMENSION}. Make sure your embedder produces "
+            f"{EMBEDDING_DIMENSION}-dim mxbai-compatible vectors."
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sync client
 # ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +108,7 @@ class VortexClient:
         endpoint: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_S,
         http: httpx.Client | None = None,
+        local_embedder: LocalEmbedder | None = None,
     ):
         self._api_key = api_key or os.environ.get("VORTEX_API_KEY")
         if not self._api_key:
@@ -102,6 +118,7 @@ class VortexClient:
         self._endpoint = endpoint or os.environ.get("VORTEX_MCP_ENDPOINT", DEFAULT_ENDPOINT)
         self._owns_http = http is None
         self._http = http or httpx.Client(timeout=timeout)
+        self._local_embedder = local_embedder
 
     def __enter__(self) -> "VortexClient":
         return self
@@ -198,25 +215,51 @@ class VortexClient:
 
     def query(
         self,
-        text_or_vector: str | list[float],
+        text_or_vector: str | Sequence[float],
         *,
         top_k: int = 10,
         expand: bool = True,
     ) -> QueryResponse:
-        """Semantic search. Pass a string (server embeds with mxbai-embed-large-v1)
-        or a pre-computed 1024-dim L2-normalized vector. Returns top_k seeds plus
-        graph-expanded neighbors (set expand=False to disable expansion)."""
-        args: dict[str, Any] = {"top_k": top_k, "expand": expand}
-        if isinstance(text_or_vector, str):
-            args["text"] = text_or_vector
-        else:
-            args["vector"] = list(text_or_vector)
+        """Semantic search. Three modes:
+
+        1. **Server-side embed** (default): pass text, server embeds with
+           ``mxbai-embed-large-v1`` via the worker tunnel. Requires
+           ``VORTEX_EMBED_URL`` set on the proxy Lambda.
+        2. **Client-side embed**: pass text, the SDK runs your configured
+           ``local_embedder`` and sends a vector. Query text never leaves your
+           machine.
+        3. **Pre-computed vector**: pass a 1024-dim list/tuple of floats.
+
+        Returns top_k seeds plus graph-expanded neighbors (set expand=False
+        to disable expansion).
+        """
+        args = self._build_query_args(text_or_vector, top_k, expand)
         d = _unwrap_tool_call(self._post(_build_call("vortex_query", args)))
         return QueryResponse(
             results=[QueryResult(**r) for r in d.get("results", [])],
             count=d["count"],
             org_id=d["org_id"],
         )
+
+    def _build_query_args(
+        self,
+        text_or_vector: str | Sequence[float],
+        top_k: int,
+        expand: bool,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {"top_k": top_k, "expand": expand}
+        if isinstance(text_or_vector, str):
+            if self._local_embedder is not None:
+                vec = list(self._local_embedder(text_or_vector))
+                _validate_vector(vec)
+                args["vector"] = vec
+            else:
+                args["text"] = text_or_vector
+        else:
+            vec = list(text_or_vector)
+            _validate_vector(vec)
+            args["vector"] = vec
+        return args
 
     # ── curation ─────────────────────────────────────────────────────────────
 
@@ -292,6 +335,7 @@ class AsyncVortexClient:
         endpoint: str | None = None,
         timeout: float = DEFAULT_TIMEOUT_S,
         http: httpx.AsyncClient | None = None,
+        local_embedder: LocalEmbedder | None = None,
     ):
         self._api_key = api_key or os.environ.get("VORTEX_API_KEY")
         if not self._api_key:
@@ -301,6 +345,7 @@ class AsyncVortexClient:
         self._endpoint = endpoint or os.environ.get("VORTEX_MCP_ENDPOINT", DEFAULT_ENDPOINT)
         self._owns_http = http is None
         self._http = http or httpx.AsyncClient(timeout=timeout)
+        self._local_embedder = local_embedder
 
     async def __aenter__(self) -> "AsyncVortexClient":
         return self
@@ -368,14 +413,22 @@ class AsyncVortexClient:
         )
 
     async def query(
-        self, text_or_vector: str | list[float], *,
+        self, text_or_vector: str | Sequence[float], *,
         top_k: int = 10, expand: bool = True,
     ) -> QueryResponse:
+        """Same three modes as VortexClient.query. See that docstring."""
         args: dict[str, Any] = {"top_k": top_k, "expand": expand}
         if isinstance(text_or_vector, str):
-            args["text"] = text_or_vector
+            if self._local_embedder is not None:
+                vec = list(self._local_embedder(text_or_vector))
+                _validate_vector(vec)
+                args["vector"] = vec
+            else:
+                args["text"] = text_or_vector
         else:
-            args["vector"] = list(text_or_vector)
+            vec = list(text_or_vector)
+            _validate_vector(vec)
+            args["vector"] = vec
         d = _unwrap_tool_call(await self._post(_build_call("vortex_query", args)))
         return QueryResponse(
             results=[QueryResult(**r) for r in d.get("results", [])],

@@ -35,15 +35,85 @@ with VortexClient() as client:
     )
     print(f"queued doc_id={doc.doc_id}")
 
-    # Recall it (text input — server embeds via the worker tunnel)
+    # Recall it (server embeds the text — see "Embedding modes" below)
     results = client.query("which embedding model do we use?", top_k=5)
     for r in results.results:
         text = r.metadata.get("text", "")[:80]
         print(f"  {r.key}  d={r.distance:.3f}  hop={r.hop}  {text!r}")
-
-    # Or recall with a pre-computed 1024-dim vector
-    # results = client.query([0.0123, -0.0456, ...], top_k=5)
 ```
+
+## Embedding modes — three ways to query
+
+The upstream index is built with **`mixedbread-ai/mxbai-embed-large-v1`**
+(1024-dim, cosine, L2-normalized). All vectors must come from this exact
+embedding space. The SDK exposes the constants if you need them:
+
+```python
+from vortex_enclave import EMBEDDING_MODEL, EMBEDDING_DIMENSION
+# → "mixedbread-ai/mxbai-embed-large-v1", 1024
+```
+
+### Mode 1 — server-side embed (default, easiest)
+
+Pass text. The server embeds via the worker tunnel and runs the search.
+Requires `VORTEX_EMBED_URL` to be set on the proxy Lambda (one-time
+deployment setup).
+
+```python
+results = client.query("how does chunking work?", top_k=5)
+```
+
+Pros: zero local setup. Cons: query text crosses the network.
+
+### Mode 2 — client-side embed (recommended for privacy or scale)
+
+Pass text + give the SDK a local embedder. The SDK runs your embedder
+client-side and sends only the resulting vector. Query text never leaves
+your machine.
+
+```python
+# Install the bundled mxbai helper:  pip install 'vortex-enclave[mxbai]'
+from vortex_enclave import VortexClient
+from vortex_enclave.embedders import MxbaiEmbedder
+
+embedder = MxbaiEmbedder()  # auto-detects CUDA → MPS → CPU
+with VortexClient(local_embedder=embedder) as client:
+    results = client.query("how does chunking work?", top_k=5)
+```
+
+Or bring your own callable — anything `(text: str) -> Sequence[float]`
+where the output is a 1024-dim L2-normalized mxbai-compatible vector:
+
+```python
+def my_embedder(text: str) -> list[float]:
+    return some_mxbai_compatible_pipeline(text)
+
+with VortexClient(local_embedder=my_embedder) as client:
+    results = client.query("...")
+```
+
+The SDK validates the dimension before sending and raises
+`VortexEmbeddingError` if the vector isn't 1024-dim.
+
+### Mode 3 — pre-computed vectors (advanced)
+
+Already have vectors from your own pipeline? Pass them directly:
+
+```python
+v = my_pipeline.embed(query_text)  # must be 1024-d, mxbai-space, L2-normed
+results = client.query(v, top_k=5)
+```
+
+You're on the hook for embedding-space match. The SDK validates dimension;
+it can't verify your model.
+
+### Picking a mode
+
+| Mode | Privacy | Setup | Latency | When |
+|---|---|---|---|---|
+| Server-side | text crosses wire | none | network round-trip | the default — fine for most things |
+| Client-side (`MxbaiEmbedder`) | text stays local | `pip install '...[mxbai]'` | depends on your hardware | privacy-sensitive queries; offline-friendly |
+| Pre-computed | text stays local | depends on you | fastest | bulk batches; integration with existing embed pipelines |
 
 ## Async usage
 

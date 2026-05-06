@@ -42,6 +42,13 @@ class VortexInternalError(VortexError):
     """Server-side failure. Check `data` for the underlying error message."""
 
 
+class VortexEmbeddingError(VortexError):
+    """The vector you're trying to send doesn't match the upstream index's
+    embedding contract — wrong dimension, or local embedder produced a value
+    of the wrong shape. Server-side checks may also raise this for vectors
+    that pass dimension but are obviously not L2-normalized."""
+
+
 def raise_for_jsonrpc_error(err: dict[str, Any]) -> None:
     """Translate a JSON-RPC error envelope into a typed exception."""
     code = err.get("code")

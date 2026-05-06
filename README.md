@@ -26,13 +26,36 @@ Ten tools, in three categories:
 | **Manage** | `vortex_forget` | `ingest` |
 | **Reflect** | `vortex_whoami`, `vortex_stats` | (any) / `query` |
 
-## Embedding model
+## Embedding model — what gets enforced and how
 
 The upstream index is built with **`mxbai-embed-large-v1`** (Mixedbread AI),
-1024-dimensional, cosine distance, L2-normalized. All content ingested via
-the `*_ingest_*` tools is embedded with this model. Pre-computed query
-vectors must match this embedding space — mixing models silently returns
-nonsense.
+1024-dim, cosine, L2-normalized. **Every vector — ingested or queried — must
+live in this embedding space.** Mixing models silently returns nonsense:
+cosine across mismatched embedding spaces is not meaningful, but it doesn't
+error either, it just retrieves garbage with confidence.
+
+What's enforced where:
+
+| Layer | Check | When it fires |
+|---|---|---|
+| **Server-side ingest** (worker → S3 Vectors) | hardcoded to mxbai in worker | every chunk written |
+| **Server-side query embedding** (`text` → vector via worker tunnel) | hardcoded to mxbai in worker `/embed` | every text-mode query when configured |
+| **SDK / bridge: dimension check** | rejects non-1024-d vectors before sending | every pre-computed vector |
+| **SDK: model attestation** | not implementable — a 1024-d float array carries no model identity | — |
+
+So enforcement runs at three levels but the **honor system applies on the wire** — the server can't tell if your 1024-d vector came from mxbai or from a different model truncated to 1024. Use the `localEmbedder` hook (see below) and you don't have to think about it.
+
+### Three query modes — pick by what your agent needs
+
+| Mode | Where embedding runs | Query text leaves machine? | Setup |
+|---|---|---|---|
+| **Server-side** (default) | Worker tunnel via `VORTEX_EMBED_URL` | yes | none if the deployment has tunnel configured |
+| **Client-side via `localEmbedder`** | Inside the SDK, before HTTPS | no | `pip install 'vortex-enclave[mxbai]'` (Python) / `npm i @xenova/transformers` (TS) |
+| **Pre-computed vector** | Wherever you want | no | your problem to keep models aligned |
+
+All three SDKs (Python, TS, plus the bridge) accept a vector as input. The Python and TS SDKs add a `local_embedder` / `localEmbedder` parameter that runs an embedder client-side automatically when you pass text — see each SDK's README for examples.
+
+The bridge is a transparent JSON-RPC pipe. If your MCP host can compute embeddings before calling, send `vector` in your tool call and it'll pass through. Most MCP hosts don't embed locally, so they typically use server-side mode.
 
 ## Quick picker
 
