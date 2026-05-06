@@ -20,6 +20,18 @@ Eight tools are exposed by the upstream server: `vortex_whoami`, `vortex_query`,
 `vortex_ingest_text`, `vortex_ingest_url`, `vortex_list_documents`,
 `vortex_get_document`, `vortex_forget`, `vortex_stats`.
 
+## Embedding model
+
+The upstream index is built with **`mxbai-embed-large-v1`** (Mixedbread AI),
+1024-dimensional, cosine distance, L2-normalized. All content ingested via
+`vortex_ingest_text` / `vortex_ingest_url` is embedded with this model on the
+ingestion worker. Pre-computed query vectors must match this embedding space —
+mixing models silently returns nonsense (cosine across mismatched spaces is
+not meaningful).
+
+If you bring your own vectors via a custom pipeline (rather than going through
+the ingest tools), use the same model so the cosine geometry stays consistent.
+
 ## Install — once published to npm
 
 ```jsonc
