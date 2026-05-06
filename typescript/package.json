@@ -1,0 +1,49 @@
+{
+  "name": "@vortex-enclave/sdk",
+  "version": "0.1.0",
+  "description": "Native TypeScript/JavaScript client for Vortex Enclave — sovereign vector search and agent memory",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "vortex-enclave",
+    "vector-search",
+    "rag",
+    "agent-memory",
+    "mcp",
+    "embeddings"
+  ],
+  "homepage": "https://fusionlab.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feepfoop/vortex-enclave-mcp-server.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/feepfoop/vortex-enclave-mcp-server/issues"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "typescript": "^5.4.0"
+  }
+}

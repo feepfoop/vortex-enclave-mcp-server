@@ -1,134 +1,95 @@
-# @vortex-enclave/mcp-server
+# Vortex Enclave — Clients
 
-[![license](https://img.shields.io/npm/l/@vortex-enclave/mcp-server.svg)](./LICENSE)
+Public client packages for [Vortex Enclave](https://fusionlab.ai) — sovereign
+vector search and agent memory backed by AWS S3 Vectors. Three integration
+shapes ship from this repo:
 
-MCP stdio bridge for [Vortex Enclave](https://fusionlab.ai). Spawned by MCP
-hosts (Claude Desktop, Cursor, Continue, custom stdio clients) — translates
-stdio JSON-RPC to the hosted `/mcp` Streamable HTTP endpoint and back.
+| Package | Use when | Path |
+|---|---|---|
+| [`@vortex-enclave/mcp-server`](./bridge) | An MCP host (Claude Desktop, Cursor, Continue) needs to spawn a stdio bridge | [`bridge/`](./bridge) |
+| [`vortex-enclave`](./python) (Python) | Native Python integration — you're calling Vortex from your own code | [`python/`](./python) |
+| [`@vortex-enclave/sdk`](./typescript) (TypeScript / JavaScript) | Native TS/JS integration in Node 20+ or modern browsers | [`typescript/`](./typescript) |
 
-## What it does
+All three talk to the same upstream `/mcp` endpoint and authenticate via the
+same MCP key minted in the portal. They differ only in how they're invoked.
 
-```
-   ┌────────────────┐    stdio JSON-RPC    ┌──────────────────────┐    HTTPS    ┌──────────────────────┐
-   │ Claude Desktop │ ──────────────────▶  │ this bridge (Node)   │ ──────────▶ │ Vortex Enclave /mcp  │
-   │ Cursor / etc.  │                      │ adds X-MCP-Key       │             │ (AWS Lambda)         │
-   └────────────────┘    stdio JSON-RPC    └──────────────────────┘    HTTPS    └──────────────────────┘
-                       ◀──────────────────                          ◀──────────
-```
+## What the upstream server provides
 
-Eight tools are exposed by the upstream server: `vortex_whoami`, `vortex_query`,
-`vortex_ingest_text`, `vortex_ingest_url`, `vortex_list_documents`,
-`vortex_get_document`, `vortex_forget`, `vortex_stats`.
+Ten tools, in three categories:
+
+| Category | Tools | Required scope |
+|---|---|---|
+| **Recall** | `vortex_query` (text or vector) | `query` |
+| **Remember** | `vortex_ingest_text`, `vortex_ingest_url` | `ingest` |
+| **Browse** | `vortex_list_documents`, `vortex_get_document` | `query` |
+| **Curate** (Karpathy-wiki-pattern) | `vortex_link`, `vortex_log` | `ingest` / `query` |
+| **Manage** | `vortex_forget` | `ingest` |
+| **Reflect** | `vortex_whoami`, `vortex_stats` | (any) / `query` |
 
 ## Embedding model
 
 The upstream index is built with **`mxbai-embed-large-v1`** (Mixedbread AI),
 1024-dimensional, cosine distance, L2-normalized. All content ingested via
-`vortex_ingest_text` / `vortex_ingest_url` is embedded with this model on the
-ingestion worker. Pre-computed query vectors must match this embedding space —
-mixing models silently returns nonsense (cosine across mismatched spaces is
-not meaningful).
+the `*_ingest_*` tools is embedded with this model. Pre-computed query
+vectors must match this embedding space — mixing models silently returns
+nonsense.
 
-If you bring your own vectors via a custom pipeline (rather than going through
-the ingest tools), use the same model so the cosine geometry stays consistent.
+## Quick picker
 
-## Install — once published to npm
+**You're an AI host (Claude Desktop / Cursor / Continue):** use the
+[bridge](./bridge). The MCP host spawns it as a subprocess, you paste a
+config block.
 
-```jsonc
-// claude_desktop_config.json
-{
-  "mcpServers": {
-    "vortex-enclave": {
-      "command": "npx",
-      "args": ["-y", "@vortex-enclave/mcp-server"],
-      "env": {
-        "VORTEX_API_KEY": "mcp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-      }
-    }
-  }
-}
+**You're writing Python:** use the [Python SDK](./python).
+
+```python
+from vortex_enclave import VortexClient
+with VortexClient(api_key="mcp_...") as client:
+    results = client.query("how does chunking work?", top_k=5)
 ```
 
-Mint a `VORTEX_API_KEY` in the portal at <https://fusionlab.ai> → MCP Keys.
+**You're writing TypeScript/JavaScript:** use the [TS SDK](./typescript).
 
-## Install — from this repo (works today)
-
-If you want to use it before the npm publish:
-
-```bash
-git clone https://github.com/feepfoop/vortex-enclave-mcp-server.git ~/vortex-enclave-mcp-server
+```ts
+import { VortexClient } from "@vortex-enclave/sdk";
+const client = new VortexClient({ apiKey: "mcp_..." });
+const results = await client.query("how does chunking work?", { topK: 5 });
 ```
-
-Then point your MCP host config at the local file:
-
-```jsonc
-{
-  "mcpServers": {
-    "vortex-enclave": {
-      "command": "node",
-      "args": ["/Users/you/vortex-enclave-mcp-server/index.js"],
-      "env": {
-        "VORTEX_API_KEY": "mcp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-      }
-    }
-  }
-}
-```
-
-## Configuration paths per host
-
-| Host | Config file |
-|---|---|
-| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-| Cursor (global) | `~/.cursor/mcp.json` |
-| Cursor (project) | `<repo>/.cursor/mcp.json` |
-| Continue 1.0+ | `~/.continue/config.yaml` (under `mcpServers:`) |
-| Continue 0.x | `~/.continue/config.json` (under `experimental.modelContextProtocolServers`) |
-
-Restart the host after saving the config.
-
-## Environment variables
-
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `VORTEX_API_KEY` | yes | — | MCP key from the portal. Format: `mcp_<32 hex>`. |
-| `VORTEX_MCP_ENDPOINT` | no | hosted Vortex Enclave endpoint | Override for self-hosted deployments. |
 
 ## How auth works
 
-The bridge sends `X-MCP-Key: $VORTEX_API_KEY` on every request to `/mcp`. The
-upstream server SHA-256-hashes the key and looks up SSM at `/vortex/keys/{hash}`
-to retrieve `{org_id, role, scopes}`. Each tool call is then RBAC-checked
-against the role.
+All three packages send `X-MCP-Key: $VORTEX_API_KEY` (or `Authorization:
+Bearer $VORTEX_API_KEY`) on every request. The upstream server SHA-256-hashes
+the key, looks up SSM at `/vortex/keys/{hash}`, and resolves it to
+`{org_id, role, scopes}`. Each tool call is RBAC-checked server-side.
 
-Agents inherit **the role of whoever minted the key**, downgraded if the human
-chose a stricter scope when creating it. A `viewer`-scoped MCP key cannot call
-ingest tools regardless of what the agent asks for.
+Agents inherit the role of whoever minted the key, downgraded if the human
+chose a stricter scope. A `viewer`-scoped key cannot call ingest tools
+regardless of what the agent asks for.
 
-## Development
+## Mint a key
 
-```bash
-git clone https://github.com/feepfoop/vortex-enclave-mcp-server.git
-cd vortex-enclave-mcp-server
-node index.js   # reads stdin, forwards to /mcp
+1. Sign in at <https://fusionlab.ai>
+2. MCP Keys → Create Key → choose name + scope
+3. Copy the `mcp_…` value (shown once only)
+4. Paste into your client's config / env
+
+## Repo layout
+
+```
+vortex-enclave-mcp-server/
+├── bridge/         # @vortex-enclave/mcp-server — stdio bridge (Node)
+├── python/         # vortex-enclave — Python SDK (sync + async)
+├── typescript/     # @vortex-enclave/sdk — TS/JS SDK
+├── README.md       # you are here
+└── LICENSE         # MIT, applies to everything in this repo
 ```
 
-Test by piping JSON-RPC into stdin (LSP framing OR newline-delimited):
-
-```bash
-VORTEX_API_KEY=mcp_xxx node index.js <<EOF
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list"}
-EOF
-```
-
-## Related
-
-- The Vortex Enclave platform itself (private monorepo): the AWS infra, Go
-  proxy, Next.js portal, and Python ingestion worker live there.
-- Landing page: <https://fusionlab.ai>
+The Vortex Enclave platform itself (AWS CDK, Go Lambda proxy, Next.js portal,
+Python ingestion worker) lives in a separate private monorepo. This
+repository contains only the client-facing pieces.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT — see [LICENSE](./LICENSE). Each package's `README.md` has its own
+quickstart and full API reference.

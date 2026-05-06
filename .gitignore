@@ -7,3 +7,12 @@ node_modules/
 .vercel/
 dist/
 build/
+
+# python build artifacts
+python/.venv/
+python/dist/
+python/*.egg-info
+python/src/*.egg-info
+python/src/**/*.egg-info
+python/__pycache__/
+python/**/__pycache__/
