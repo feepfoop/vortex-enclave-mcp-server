@@ -1,7 +1,7 @@
 # Vortex Enclave — Clients
 
 Public client packages for [Vortex Enclave](https://fusionlab.ai) — sovereign
-vector search and agent memory backed by AWS S3 Vectors. Three integration
+vector search and agent memory backed by AWS S3 Vectors. Four integration
 shapes ship from this repo:
 
 | Package | Use when | Path |
@@ -9,8 +9,9 @@ shapes ship from this repo:
 | [`@vortex-enclave/mcp-server`](./bridge) | An MCP host (Claude Desktop, Cursor, Continue) needs to spawn a stdio bridge | [`bridge/`](./bridge) |
 | [`vortex-enclave`](./python) (Python) | Native Python integration — you're calling Vortex from your own code | [`python/`](./python) |
 | [`@vortex-enclave/sdk`](./typescript) (TypeScript / JavaScript) | Native TS/JS integration in Node 20+ or modern browsers | [`typescript/`](./typescript) |
+| [`vortex-ingest-cli`](./helpers/ingest-cli) | One-shot: "I have a folder, get it queryable." Walks any directory, parses each file by type (PDF/DOCX/PPTX/HTML/code/text), uploads via the SDK. | [`helpers/ingest-cli/`](./helpers/ingest-cli) |
 
-All three talk to the same upstream `/mcp` endpoint and authenticate via the
+All four talk to the same upstream `/mcp` endpoint and authenticate via the
 same MCP key minted in the portal. They differ only in how they're invoked.
 
 ## What the upstream server provides
@@ -101,11 +102,13 @@ regardless of what the agent asks for.
 
 ```
 vortex-enclave-mcp-server/
-├── bridge/         # @vortex-enclave/mcp-server — stdio bridge (Node)
-├── python/         # vortex-enclave — Python SDK (sync + async)
-├── typescript/     # @vortex-enclave/sdk — TS/JS SDK
-├── README.md       # you are here
-└── LICENSE         # MIT, applies to everything in this repo
+├── bridge/                       # @vortex-enclave/mcp-server — stdio bridge (Node)
+├── python/                       # vortex-enclave — Python SDK (sync + async)
+├── typescript/                   # @vortex-enclave/sdk — TS/JS SDK
+├── helpers/
+│   └── ingest-cli/               # vortex-ingest — bulk directory uploader
+├── README.md                     # you are here
+└── LICENSE                       # MIT, applies to everything in this repo
 ```
 
 The Vortex Enclave platform itself (AWS CDK, Go Lambda proxy, Next.js portal,
